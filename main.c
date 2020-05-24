@@ -1,16 +1,15 @@
 
-/* gcc -o rightbutton `pkg-config --cflags --libs x11 xi` main.c */
+/* gcc  -g -O2   -o rightbutton main.o -lX11 -lXi -lXtst -lpthread  */
 
-/* gcc -o part5        `pkg-config --cflags --libs xi` part5.c */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/extensions/XTest.h> /* emulating device events */
 #include <X11/Xutil.h>
 
 #include <sys/types.h>
-#include <unistd.h>
 
 static int xi_opcode;
 
@@ -20,25 +19,16 @@ Display *dpy;
 
 int pending_click = False;
 
-#include <X11/extensions/XTest.h> /* emulating device events */
-
 static void mouse_click(Display *display, int button)
 {
-
-    // XTestFakeMotionEvent(display, DefaultScreen(dpy), x, y, 0);
     XTestFakeButtonEvent(display, button, True, CurrentTime);
     XTestFakeButtonEvent(display, button, False, CurrentTime);
-    //XFlush(dpy);
 }
 
 void grab_pointer(Display *dpy)
 {
 
-    printf("grabbing\n");
-
     int count = XScreenCount(dpy);
-
-    printf("%d screens\n", count);
 
     int screen;
     for (screen = 0; screen < count; screen++)
@@ -52,9 +42,9 @@ void grab_pointer(Display *dpy)
 
         mask.deviceid = XIAllDevices;
         mask.mask_len = XIMaskLen(XI_Motion);
-        mask.mask = calloc(mask.mask_len, sizeof(char));
+        mask.mask = calloc(mask.mask_len, sizeof(unsigned char));
         XISetMask(mask.mask, XI_ButtonPress);
-        //XISetMask(mask.mask, XI_Motion);
+        XISetMask(mask.mask, XI_Motion);
         XISetMask(mask.mask, XI_ButtonRelease);
 
         int nmods = 1;
@@ -69,19 +59,13 @@ void grab_pointer(Display *dpy)
             return;
         }
         free(mask.mask);
-
-        //   grab_key(dpy, win);
-
-        // grab_enter(dpy, win);
     }
-
-    // XFlush(dpy);
 }
 
 void ungrab_pointer(Display *dpy)
 {
 
-    printf("ungrabbing\n");
+    //printf("ungrabbing\n");
 
     int count = XScreenCount(dpy);
 
@@ -154,7 +138,7 @@ int main(int argc, char **argv)
 
     if (argc > 2)
     {
-        printf("usage: rightbutton \" command run when 2 clicks \" \n");
+        fprintf(stderr, "usage: rightbutton \" command run when 2 clicks \" \n");
     }
 
     last = 0;
@@ -173,7 +157,7 @@ int main(int argc, char **argv)
 
     if (!XQueryExtension(dpy, "XInputExtension", &xi_opcode, &event, &error))
     {
-        printf("X Input extension not available.\n");
+        fprintf(stderr, "X Input extension not available.\n");
         return -1;
     }
 
@@ -181,14 +165,10 @@ int main(int argc, char **argv)
 
     int stop = False;
 
-    printf("Grab on device 2, waiting for button release\n");
-
     int x11_fd;
     fd_set in_fds;
 
     struct timeval tv;
-
-    int count = XScreenCount(dpy);
 
     XFlush(dpy);
 
@@ -210,7 +190,6 @@ int main(int argc, char **argv)
 
         if (XNextEventTimed(dpy, &ev, next_tick))
         {
-            //            dispatch(&cookie);
 
             XGenericEventCookie *cookie = &ev.xcookie;
 
@@ -221,15 +200,13 @@ int main(int argc, char **argv)
 
             if (cookie->evtype == XI_Motion)
             {
-                printf(".");
-                fflush(stdout);
+                //printf(".");
+                //fflush(stdout);
             }
             else if (cookie->evtype == XI_ButtonRelease)
             {
 
-                XIDeviceEvent *data = (XIDeviceEvent *)ev.xcookie.data;
-
-                printf("release\n");
+                //XIDeviceEvent *data = (XIDeviceEvent *)ev.xcookie.data;
 
                 waiting++;
             }
@@ -257,7 +234,6 @@ int main(int argc, char **argv)
 
                 if (argc == 2)
                 {
-                    printf("running command \n");
 
                     int result = system(argv[1]);
                     if (result)
