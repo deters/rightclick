@@ -7,39 +7,37 @@
 #include <string.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/Xutil.h>
+
+#include <time.h>
 
 static int xi_opcode;
 
 int BUTTON = 3;
 
-static Window create_win(Display *dpy)
+Display *dpy;
+
+int pending_click = False;
+
+#include <X11/extensions/XTest.h> /* emulating device events */
+
+static void mouse_click(Display *display, int button)
 {
-    Window win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), 0, 0, 200,
-                                     200, 0, 0, WhitePixel(dpy, 0));
-    Window subwindow = XCreateSimpleWindow(dpy, win, 50, 50, 50, 50, 0, 0,
-                                           BlackPixel(dpy, 0));
 
-    XSelectInput(dpy, win, ExposureMask | StructureNotifyMask);
-
-    XMapWindow(dpy, subwindow);
-    XMapWindow(dpy, win);
-    XFlush(dpy);
-
-    while (1)
-    {
-        XEvent ev;
-        XNextEvent(dpy, &ev);
-        if (ev.type == MapNotify)
-            break;
-    }
-
-    return win;
+    // XTestFakeMotionEvent(display, DefaultScreen(dpy), x, y, 0);
+    XTestFakeButtonEvent(display, button, True, CurrentTime);
+    XTestFakeButtonEvent(display, button, False, CurrentTime);
+    //XFlush(dpy);
 }
 
 void grab_pointer(Display *dpy)
 {
 
+    printf("grabbing\n");
+
     int count = XScreenCount(dpy);
+
+    printf("%d screens\n", count);
 
     int screen;
     for (screen = 0; screen < count; screen++)
@@ -58,20 +56,13 @@ void grab_pointer(Display *dpy)
         //XISetMask(mask.mask, XI_Motion);
         XISetMask(mask.mask, XI_ButtonRelease);
 
-        int nmods = 4;
-        XIGrabModifiers mods[4] = {
-            {0, 0},                  // no modifiers
-            {LockMask, 0},           // Caps lock
-            {Mod2Mask, 0},           // Num lock
-            {LockMask | Mod2Mask, 0} // Caps & Num lock
-        };
-
-        nmods = 1;
-        mods[0].modifiers = XIAnyModifier;
+        int nmods = 1;
+        XIGrabModifiers mods = {
+            XIAnyModifier};
 
         if ((rc = XIGrabButton(dpy, 2, BUTTON,
                                win, None,
-                               GrabModeAsync, GrabModeAsync, False, &mask, nmods, mods)) != GrabSuccess)
+                               GrabModeAsync, GrabModeAsync, False, &mask, nmods, &mods)) != GrabSuccess)
         {
             fprintf(stderr, "Grab failed with %d\n", rc);
             return;
@@ -83,11 +74,13 @@ void grab_pointer(Display *dpy)
         // grab_enter(dpy, win);
     }
 
-    XFlush(dpy);
+    // XFlush(dpy);
 }
 
 void ungrab_pointer(Display *dpy)
 {
+
+    printf("ungrabbing\n");
 
     int count = XScreenCount(dpy);
 
@@ -104,67 +97,62 @@ void ungrab_pointer(Display *dpy)
     }
 }
 
-void grab_key(Display *dpy, Window win)
+Bool XNextEventTimed(Display *display, XEvent *event_return, struct timeval *timeout)
 {
-    int stop = 0;
-    int nmodifiers = 1, failed_nmodifiers;
-    XIGrabModifiers modifiers[nmodifiers], failed_modifiers[nmodifiers];
-    XIEventMask mask;
 
-    printf("Grabbing keycode 38 (usually 'a') with any modifier\n");
+    /*
+     *  Usage:
+     *    struct timeval = { .tv_sec = 5, .tv_usec = 0 };
+     *    if (XNextEventTimed(display, &event, &timeout) == True) {
+     *        //.. do your event processing switch
+     *    } else {
+     *        //.. do your timeout thing
+     *    }
+     *
+     *  Return:  
+     *    True if an event was selected, or False when no event
+     *    was found prior to the timeout or when select returned
+     *    an error (most likely EINTR).
+    */
 
-    /* Only listen for XI_KeyRelease */
-    mask.mask_len = XIMaskLen(XI_KeyRelease);
-    mask.mask = calloc(0, mask.mask_len);
-    XISetMask(mask.mask, XI_KeyRelease);
-
-    modifiers[0].modifiers = XIAnyModifier;
-
-    memcpy(failed_modifiers, modifiers, sizeof(modifiers));
-
-    failed_nmodifiers = XIGrabKeycode(dpy, 3, 38, win, GrabModeAsync,
-                                      GrabModeAsync, False, &mask,
-                                      nmodifiers, failed_modifiers);
-
-    free(mask.mask);
-
-    if (failed_nmodifiers)
+    if (timeout == NULL)
     {
-        int i;
-        for (i = 0; i < failed_nmodifiers; i++)
-            printf("Modifier %x failed with error %d\n",
-                   failed_modifiers[i].modifiers, failed_modifiers[i].status);
+        XNextEvent(display, event_return);
+        return True;
     }
 
-    printf("Waiting for grab to activate now. Press a key.\n");
-
-    while (!stop)
+    if (XPending(display) == 0)
     {
-        XEvent ev;
-        XGenericEventCookie *cookie = &ev.xcookie;
-        XNextEvent(dpy, &ev);
-        if (cookie->type != GenericEvent ||
-            cookie->extension != xi_opcode ||
-            !XGetEventData(dpy, cookie))
-            continue;
-
-        if (cookie->evtype == XI_KeyPress)
-            printf("Oops, we didn't register for this event.\n");
-        else if (cookie->evtype == XI_KeyRelease)
+        int fd = ConnectionNumber(display);
+        fd_set readset;
+        FD_ZERO(&readset);
+        FD_SET(fd, &readset);
+        if (select(fd + 1, &readset, NULL, NULL, timeout) > 0)
         {
-            printf("Release, grab will deactivate now\n");
-            stop = 1;
+            XNextEvent(display, event_return);
+            return True;
         }
-
-        XFreeEventData(dpy, cookie);
+        else
+        {
+            return False;
+        }
     }
-
-    XIUngrabKeycode(dpy, 3, 38, win, nmodifiers, modifiers);
+    else
+    {
+        XNextEvent(display, event_return);
+        return True;
+    }
 }
+
+clock_t last;
+
+int waiting = False;
 
 int main(int argc, char **argv)
 {
-    Display *dpy;
+
+    last = 0;
+
     int event, error;
     Window win;
     XEvent ev;
@@ -189,29 +177,88 @@ int main(int argc, char **argv)
 
     printf("Grab on device 2, waiting for button release\n");
 
+    int x11_fd;
+    fd_set in_fds;
+
+    struct timeval tv;
+
+    int count = XScreenCount(dpy);
+
+    XFlush(dpy);
+
+    struct timeval interval = {.tv_sec = 0, .tv_usec = 900 * 1000};
+    struct timeval next_tick = interval;
+
     while (!stop)
     {
-        XGenericEventCookie *cookie = &ev.xcookie;
-        XNextEvent(dpy, &ev);
-        if (cookie->type != GenericEvent ||
-            cookie->extension != xi_opcode ||
-            !XGetEventData(dpy, cookie))
-            continue;
 
-        if (cookie->evtype == XI_Motion)
-        {
-            printf(".");
-            fflush(stdout);
-        }
-        else if (cookie->evtype == XI_ButtonRelease)
-        {
-            printf("release. Ungrabbing.\n");
-            //stop = True;
-        }
+        printf(".");
 
-        XFreeEventData(dpy, cookie);
+        if (XNextEventTimed(dpy, &ev, &next_tick))
+        {
+            //            dispatch(&cookie);
+
+            XGenericEventCookie *cookie = &ev.xcookie;
+
+            if (cookie->type != GenericEvent ||
+                cookie->extension != xi_opcode ||
+                !XGetEventData(dpy, cookie))
+                continue;
+
+            if (cookie->evtype == XI_Motion)
+            {
+                printf(".");
+                fflush(stdout);
+            }
+            else if (cookie->evtype == XI_ButtonRelease)
+            {
+
+                XIDeviceEvent *data = (XIDeviceEvent *)ev.xcookie.data;
+
+                printf("release\n");
+
+                if (waiting)
+                {
+                    waiting = False;
+                    printf("double click detected.\n");
+                }
+                else
+                {
+
+                    printf(" waiting secound click \n");
+                    waiting = True;
+                }
+            }
+
+            XFreeEventData(dpy, cookie);
+        }
+        else
+        {
+
+            if (waiting)
+            {
+
+                printf("emulating click\n");
+                waiting = False;
+
+                XFlush(dpy);
+
+                while (XPending(dpy))
+                {
+                    XNextEvent(dpy, &ev);
+                }
+
+                ungrab_pointer(dpy);
+
+                mouse_click(dpy, BUTTON);
+
+                grab_pointer(dpy);
+            }
+
+            fprintf(stdout, "tick...\n");
+            next_tick = interval;
+        }
     }
-
     ungrab_pointer;
 
     XCloseDisplay(dpy);

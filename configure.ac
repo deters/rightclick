@@ -13,8 +13,11 @@ AC_PROG_CC
 # Checks for libraries.
 PKG_CHECK_MODULES(LIBX11, x11)
 PKG_CHECK_MODULES(LIBXI, xi)
+PKG_CHECK_MODULES(LIBXTST, xtst)
+
 # PKG_CHECK_MODULES(LIBINPUT, libinput)
 
+AX_PTHREAD
 
 # Checks for header files.
 AC_PATH_X
