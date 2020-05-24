@@ -9,7 +9,8 @@
 #include <X11/extensions/XInput2.h>
 #include <X11/Xutil.h>
 
-#include <time.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 static int xi_opcode;
 
@@ -146,10 +147,15 @@ Bool XNextEventTimed(Display *display, XEvent *event_return, struct timeval *tim
 
 clock_t last;
 
-int waiting = False;
+int waiting = 0;
 
 int main(int argc, char **argv)
 {
+
+    if (argc > 2)
+    {
+        printf("usage: rightbutton \" command run when 2 clicks \" \n");
+    }
 
     last = 0;
 
@@ -186,15 +192,23 @@ int main(int argc, char **argv)
 
     XFlush(dpy);
 
-    struct timeval interval = {.tv_sec = 0, .tv_usec = 900 * 1000};
-    struct timeval next_tick = interval;
+    struct timeval *next_tick;
 
     while (!stop)
     {
 
-        printf(".");
+        struct timeval interval = {.tv_sec = 0, .tv_usec = 900 * 1000};
 
-        if (XNextEventTimed(dpy, &ev, &next_tick))
+        if (waiting)
+        {
+            next_tick = &interval;
+        }
+        else
+        {
+            next_tick = NULL;
+        }
+
+        if (XNextEventTimed(dpy, &ev, next_tick))
         {
             //            dispatch(&cookie);
 
@@ -217,17 +231,7 @@ int main(int argc, char **argv)
 
                 printf("release\n");
 
-                if (waiting)
-                {
-                    waiting = False;
-                    printf("double click detected.\n");
-                }
-                else
-                {
-
-                    printf(" waiting secound click \n");
-                    waiting = True;
-                }
+                waiting++;
             }
 
             XFreeEventData(dpy, cookie);
@@ -235,28 +239,39 @@ int main(int argc, char **argv)
         else
         {
 
-            if (waiting)
+            if (waiting == 1)
             {
 
                 printf("emulating click\n");
-                waiting = False;
 
                 XFlush(dpy);
 
-                while (XPending(dpy))
-                {
-                    XNextEvent(dpy, &ev);
-                }
-
                 ungrab_pointer(dpy);
-
                 mouse_click(dpy, BUTTON);
-
                 grab_pointer(dpy);
             }
 
-            fprintf(stdout, "tick...\n");
-            next_tick = interval;
+            if (waiting > 1)
+            {
+                printf("%d clicks detected\n", waiting);
+
+                if (argc == 2)
+                {
+                    printf("running command \n");
+
+                    int result = system(argv[1]);
+                    if (result)
+                    {
+                        printf("error %d running command\n", result);
+                    }
+                }
+                else
+                {
+                    printf("no command provided\n");
+                }
+            }
+
+            waiting = 0;
         }
     }
     ungrab_pointer;
